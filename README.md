@@ -1,4 +1,3 @@
-### 0penAGI_harmony
 
 # 🌌 0penAGI Breathing Harmony v0.8
 
@@ -36,8 +35,8 @@
 ### Installation
 
 ```bash
-git clone https://github.com/yourusername/openagi-symphony.git
-cd openagi-symphony
+git clone https://github.com/0penAGI/0penagi_harmony.git
+cd 0penagi-harmony
 pip install -e .
 ```
 
@@ -50,16 +49,16 @@ pip install numpy matplotlib scipy torch tensorboard
 
 ```bash
 # Basic simulation (1500 iterations, 3 agents)
-python openagi_symphony.py
+python 0penagi_harmony.py
 
 # With neural mode and training
-python openagi_symphony.py --neural_mode --iterations 3000
+python 0penagi_harmony.py --neural_mode --iterations 3000
 
 # Custom configuration
-python openagi_symphony.py --num_agents 5 --attractor rossler
+python 0penagi_harmony.py --num_agents 5 --attractor rossler
 
 # Run tests
-python openagi_symphony.py --test
+python 0penagi_harmony.py --test
 ```
 
 ### What You Get
@@ -140,8 +139,8 @@ maestro.consciousness += 0.002 * harmony_index * breath_factor
 ### As a Library
 
 ```python
-from openagi_symphony import RealityAgent, ShadowAgent, MaestroAgent
-from openagi_symphony import AdvancedQuantumChaos, BreathingLayer
+from 0penagi_harmony import RealityAgent, ShadowAgent, MaestroAgent
+from 0penagi_harmony import AdvancedQuantumChaos, BreathingLayer
 import numpy as np
 
 # Create agents
@@ -239,16 +238,16 @@ Plus **animation** of trajectory with breathing!
 
 ```bash
 # Auto-saved every 500 iterations
-python openagi_symphony.py --neural_mode
+python 0penagi_harmony.py --neural_mode
 
 # Load from checkpoint
-python openagi_symphony.py --checkpoint checkpoints/checkpoint_1000.pth
+python 0penagi_harmony.py --checkpoint checkpoints/checkpoint_1000.pth
 ```
 
 ### TensorBoard
 
 ```bash
-python openagi_symphony.py --neural_mode
+python 0penagi_harmony.py --neural_mode
 tensorboard --logdir=runs/symphony
 ```
 
