@@ -309,7 +309,7 @@ breather = BreathingLayer(period=50)  # shorter history
 
 ## 📚 Documentation
 
-Full class and method documentation - see [docstrings](openagi_symphony.py) in code.
+Full class and method documentation - see [docstrings](0penagi_symphony.py) in code.
 
 **Main classes:**
 - `RealityAgent` - base agent with memory and consciousness
