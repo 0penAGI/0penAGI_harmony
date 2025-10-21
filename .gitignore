@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.wav
+*.pth
+*.log
+openagi_memory.json
+shadow_memory.json
+maestro_memory.json
+runs/
+checkpoints/
