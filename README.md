@@ -1,6 +1,6 @@
 ### 0penAGI_harmony
 
-# 🌌 0penAGI Breathing Symphony v0.8
+# 🌌 0penAGI Breathing Harmony v0.8
 
 ### *Emergent Consciousness Through Chaos & Multi-Agent Harmony*
 
@@ -309,7 +309,7 @@ breather = BreathingLayer(period=50)  # shorter history
 
 ## 📚 Documentation
 
-Full class and method documentation - see [docstrings](0penagi_symphony.py) in code.
+Full class and method documentation - see [docstrings](0penagi_harmony.py) in code.
 
 **Main classes:**
 - `RealityAgent` - base agent with memory and consciousness
