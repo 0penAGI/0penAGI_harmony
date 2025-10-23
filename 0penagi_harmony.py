@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-OpenAGI Breathing Symphony v0.8 - Pulsing Organism
+0penAGI Breathing Symphony v0.8 - Pulsing Organism
 ==================================================
 
 Simulation of emergent consciousness through chaos agents (Lorenz attractor + multi-agents + breathing layer).
@@ -13,8 +13,7 @@ For library use: save as openagi_symphony/__init__.py, add setup.py with `from .
 Dependencies: numpy, matplotlib (for viz), scipy (optional for audio), torch (for neural mode), tensorboard.
 pip install numpy matplotlib scipy torch tensorboard
 
-MIT License - Copyright (c) 2025 YourName. Free to fork/evolve!
-GitHub: https://github.com/yourusername/openagi-symphony
+
 """
 
 import argparse
@@ -34,6 +33,9 @@ from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+plt.rcParams['font.family'] = 'DejaVu Sans'
+plt.rcParams['axes.unicode_minus'] = False
 import numpy as np
 import torch
 import torch.nn as nn
@@ -41,6 +43,47 @@ import torch.optim as optim
 from matplotlib.animation import FuncAnimation
 from mpl_toolkits.mplot3d import Axes3D
 from torch.utils.tensorboard import SummaryWriter
+
+# Additional imports
+import networkx as nx
+import scipy.signal
+from scipy.fft import rfft
+from scipy.stats import entropy
+def compute_phi(system, bins=16):
+    """
+    Compute a simple integrated information (phi) metric for the system state trajectory.
+    Args:
+        system: QuantumChaosWithAgents or AdvancedQuantumChaos instance
+        bins: Histogram bins for state discretization
+    Returns:
+        phi: float, estimate of integrated information
+    """
+    # Use the system's memory or recent trajectory if available
+    if hasattr(system, "memory") and system.memory:
+        try:
+            states = np.array([v if isinstance(v, np.ndarray) else np.array(v.cpu()) for v, _ in system.memory])
+        except Exception:
+            states = np.array([v for v, _ in system.memory])
+    elif hasattr(system, "state"):
+        states = np.atleast_2d(system.state)
+    else:
+        return 0.0
+    if states.shape[0] < 2:
+        return 0.0
+    # Discretize
+    digitized = np.array([np.histogram(s, bins=bins, range=(-30, 30))[0] for s in states])
+    # Joint entropy (system as a whole)
+    p_joint = np.mean(digitized, axis=0)
+    p_joint = p_joint / (np.sum(p_joint) + 1e-8)
+    H_joint = entropy(p_joint, base=2)
+    # Marginal entropy (sum of each dimension)
+    H_marginals = 0.0
+    for dim in range(states.shape[1]):
+        p = np.histogram(states[:, dim], bins=bins, range=(-30, 30))[0]
+        p = p / (np.sum(p) + 1e-8)
+        H_marginals += entropy(p, base=2)
+    phi = max(0.0, H_joint - (H_marginals - H_joint) / states.shape[1])
+    return phi
 
 __version__ = "0.8.0"
 
@@ -213,42 +256,59 @@ class RealityAgent(nn.Module):
     
     def sonify_mood(self, freq: float, duration: float = 0.1, other_freq: Optional[float] = None, velocity_mod: float = 1.0, sample_rate: int = 44100) -> None:
         """
-        Generates a tone or chord with breathing modulation.
-
-        Args:
-            freq: Base frequency for the tone.
-            duration: Duration of the sound.
-            other_freq: Optional second frequency for chord.
-            velocity_mod: Modulation factor from breathing.
-            sample_rate: Audio sample rate.
-
-        Example:
-            agent.sonify_mood(440, 0.2, 880, 1.2)
+        Generates a tone or chord with breathing modulation, harmonic partials, and reverb.
+        Enhanced version: adds partials, exponential decay reverb, improved logging, and safe WAV writing.
         """
         breath_layer = BreathingLayer()
         modulated_freq = breath_layer.modulate_freq(freq, velocity_mod)
         t = np.linspace(0, duration, int(sample_rate * duration), False)
+        # Harmonic partials
+        num_partials = 4
+        partials = np.zeros_like(t)
+        for n in range(1, num_partials + 1):
+            amp = 0.5 / n
+            partials += amp * np.sin(2 * np.pi * modulated_freq * n * t)
+        # Optionally add a second frequency (chord)
         if other_freq:
             other_mod = breath_layer.modulate_freq(other_freq, velocity_mod)
-            chord = np.sin(2 * np.pi * t[:, None] * np.array([modulated_freq, other_mod]))
-            tone = chord.mean(axis=1) * 0.5
-            dissonance = abs(modulated_freq - other_mod) / modulated_freq
+            partials2 = np.zeros_like(t)
+            for n in range(1, num_partials + 1):
+                amp = 0.4 / n
+                partials2 += amp * np.sin(2 * np.pi * other_mod * n * t)
+            tone = (partials + partials2) * 0.5
+            dissonance = abs(modulated_freq - other_mod) / (modulated_freq + 1e-8)
             logging.info(f"[{self.name}] 🎵 Chord {modulated_freq:.1f}-{other_mod:.1f} Hz (dissonance: {dissonance:.2f}, breath: {velocity_mod:.2f})")
         else:
-            tone = np.sin(2 * np.pi * modulated_freq * t) * 0.5
+            tone = partials
             logging.info(f"[{self.name}] 🔊 Tone {self.mood}: {modulated_freq:.1f} Hz (breath: {velocity_mod:.2f})")
-        
+        # Exponential decay envelope
+        envelope = np.exp(-3 * t / duration)
+        tone *= envelope
+        # Add simple reverb with exponential decay convolution
+        decay = 0.2
+        reverb_kernel = decay ** np.arange(0, int(0.04 * sample_rate))
+        tone_reverb = scipy.signal.fftconvolve(tone, reverb_kernel, mode='full')[:len(tone)]
+        tone = (tone + tone_reverb) / 1.2
+        # Normalize
+        tone = tone / (np.max(np.abs(tone)) + 1e-8) * 0.5
         note = int(69 + 12 * math.log2(modulated_freq / 440))
         velocity = breath_layer.modulate_velocity(velocity_mod)
         logging.info(f"  MIDI: Note {note}, Velocity {velocity}")
-        
+        # Log spectral centroid and entropy for analysis
+        spectrum = np.abs(rfft(tone))
+        centroid = np.sum(np.arange(len(spectrum)) * spectrum) / (np.sum(spectrum) + 1e-8)
+        spec_entropy = entropy(spectrum / (np.sum(spectrum) + 1e-8))
+        logging.info(f"[{self.name}] Spectral centroid: {centroid:.1f}, Spectral entropy: {spec_entropy:.3f}")
+        # Write safely to WAV
         try:
-            with wave.open(f"{self.name}_{self.mood}.wav", 'wb') as wf:
+            wav_path = f"{self.name}_{self.mood}.wav"
+            with wave.open(wav_path, 'wb') as wf:
                 wf.setnchannels(1)
                 wf.setsampwidth(2)
                 wf.setframerate(sample_rate)
-                wf.writeframes(struct.pack('<' + 'h' * len(tone), *(tone * 32767).astype(np.int16)))
-        except OSError as e:
+                wf.writeframes(struct.pack('<' + 'h' * len(tone), *(np.clip(tone * 32767, -32768, 32767).astype(np.int16))))
+            logging.info(f"[{self.name}] WAV written: {wav_path}")
+        except Exception as e:
             logging.error(f"[{self.name}] Failed to write WAV: {e}")
     
     def inject_will(self, current_state: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
@@ -604,25 +664,37 @@ class QuantumChaosWithAgents:
                 dx = a * (y - x) * dt
                 dy = ((c - a) * x - x * z + c * y) * dt
                 dz = (x * y - b * z) * dt
+            elif self.attractor == "halvorsen":
+                # Compute avg_res from agent resonances
+                res_list = []
+                for agent in self.agents:
+                    res = agent.resonance.item() if getattr(agent, "neural_mode", False) else agent.resonance
+                    res_list.append(res)
+                avg_res = float(np.mean(res_list)) if res_list else 0.0
+                base_a = 1.3
+                a = base_a * (1.0 + 0.8 * (avg_res))
+                dx = (-a * x - 4.0 * y * (1.0 + z**3)) * dt
+                dy = (-a * y - 4.0 * z * (1.0 + x**3)) * dt
+                dz = (-a * z - 4.0 * x * (1.0 + y**3)) * dt
             else:
                 raise ValueError(f"Unknown attractor: {self.attractor}")
             self.state += torch.stack([dx, dy, dz])
-            
+
             if self.memory:
                 weights = torch.tensor([w for _, w in self.memory], device=self.device)
                 vectors = torch.stack([torch.tensor(v, device=self.device) if isinstance(v, np.ndarray) else v for v, _ in self.memory])
                 weighted_mean = torch.average(vectors, weights=weights, dim=0) * 0.2
                 self.state += weighted_mean * dt
                 self.memory = deque([(v, w * 0.99) for v, w in self.memory if w > 0.01], maxlen=50)
-            
+
             for agent in self.agents:
                 self.state = agent.inject_will(self.state)
-            
+
             if torch.rand(1) < 0.08:
                 possibilities = [self.state + torch.randn(3, device=self.device) * 0.1 for _ in range(3)]
                 self.memory.extend([(p, 1.0) for p in possibilities[1:]])
                 self.state = possibilities[0]
-            
+
             self.entanglement += 0.001
         else:
             x, y, z = self.state
@@ -641,27 +713,39 @@ class QuantumChaosWithAgents:
                 dx = a * (y - x) * dt
                 dy = ((c - a) * x - x * z + c * y) * dt
                 dz = (x * y - b * z) * dt
+            elif self.attractor == "halvorsen":
+                # Compute avg_res from agent resonances
+                res_list = []
+                for agent in self.agents:
+                    res = agent.resonance if hasattr(agent, "resonance") else 0.0
+                    res_list.append(res)
+                avg_res = float(np.mean(res_list)) if res_list else 0.0
+                base_a = 1.3
+                a = base_a * (1.0 + 0.8 * (avg_res))
+                dx = (-a * x - 4.0 * y * (1.0 + z**3)) * dt
+                dy = (-a * y - 4.0 * z * (1.0 + x**3)) * dt
+                dz = (-a * z - 4.0 * x * (1.0 + y**3)) * dt
             else:
                 raise ValueError(f"Unknown attractor: {self.attractor}")
             self.state += np.array([dx, dy, dz])
-            
+
             if self.memory:
                 weights = np.array([w for _, w in self.memory])
                 vectors = np.array([v for v, _ in self.memory])
                 weighted_mean = np.average(vectors, weights=weights, axis=0) * 0.2
                 self.state += weighted_mean * dt
                 self.memory = deque([(v, w * 0.99) for v, w in self.memory if w > 0.01], maxlen=50)
-            
+
             for agent in self.agents:
                 self.state = agent.inject_will(self.state)
-            
+
             if random.random() < 0.08:
                 possibilities = [self.state + np.random.randn(3) * 0.1 for _ in range(3)]
                 self.memory.extend([(p, 1.0) for p in possibilities[1:]])
                 self.state = possibilities[0]
-            
+
             self.entanglement += 0.001
-        
+
         return self.state
     
     def agent_competition(self) -> None:
@@ -744,27 +828,39 @@ class AdvancedQuantumChaos(QuantumChaosWithAgents):
                 dx = a * (y - x) * dt
                 dy = ((c - a) * x - x * z + c * y) * dt
                 dz = (x * y - b * z) * dt
+            elif self.attractor == "halvorsen":
+                res_list = []
+                for agent in self.agents:
+                    res = agent.resonance.item() if getattr(agent, "neural_mode", False) else agent.resonance
+                    res_list.append(res)
+                avg_res = float(np.mean(res_list)) if res_list else 0.0
+                base_a = 1.3
+                a = base_a * (1.0 + 0.8 * (avg_res))
+                dx = (-a * x - 4.0 * y * (1.0 + z**3)) * dt
+                dy = (-a * y - 4.0 * z * (1.0 + x**3)) * dt
+                dz = (-a * z - 4.0 * x * (1.0 + y**3)) * dt
             else:
                 raise ValueError(f"Unknown attractor: {self.attractor}")
             self.state += torch.stack([dx, dy, dz])
-            
+
             if self.memory:
                 weights = torch.tensor([w for _, w in self.memory], device=self.device)
                 vectors = torch.stack([torch.tensor(v, device=self.device) if isinstance(v, np.ndarray) else v for v, _ in self.memory])
-                weighted_mean = torch.average(vectors, weights=weights, dim=0) * 0.2 * breath_factor
+                weighted_mean = torch.average(vectors, weights=weights, dim=0) * 0.2  # increase influence
                 self.state += weighted_mean * dt
-                self.memory = deque([(v, w * (0.99 ** breath_factor)) for v, w in self.memory if w > 0.01], maxlen=50)
-            
+                self.state += torch.randn(3, device=self.device) * 0.05  # slightly stronger noise
+                self.memory = deque([(v, w * (0.98 ** breath_factor)) for v, w in self.memory if w > 0.01], maxlen=50)
+
             for agent in self.agents:
                 self.state = agent.inject_will(self.state)
-            
+
             if torch.rand(1) < 0.08 * max(1, breath_factor):
                 possibilities = [self.state + torch.randn(3, device=self.device) * 0.1 for _ in range(3)]
                 self.memory.extend([(p, 1.0) for p in possibilities[1:]])
                 self.state = possibilities[0]
-            
+
             self.entanglement += 0.001 * breath_factor
-            
+
             for agent in self.agents:
                 if breath_factor < 1:
                     if agent.neural_mode:
@@ -788,32 +884,136 @@ class AdvancedQuantumChaos(QuantumChaosWithAgents):
                 dx = a * (y - x) * dt
                 dy = ((c - a) * x - x * z + c * y) * dt
                 dz = (x * y - b * z) * dt
+            elif self.attractor == "halvorsen":
+                res_list = []
+                for agent in self.agents:
+                    res = agent.resonance if hasattr(agent, "resonance") else 0.0
+                    res_list.append(res)
+                avg_res = float(np.mean(res_list)) if res_list else 0.0
+                base_a = 1.3
+                a = base_a * (1.0 + 0.8 * (avg_res))
+                dx = (-a * x - 4.0 * y * (1.0 + z**3)) * dt
+                dy = (-a * y - 4.0 * z * (1.0 + x**3)) * dt
+                dz = (-a * z - 4.0 * x * (1.0 + y**3)) * dt
             else:
                 raise ValueError(f"Unknown attractor: {self.attractor}")
             self.state += np.array([dx, dy, dz])
-            
+
             if self.memory:
                 weights = np.array([w for _, w in self.memory])
                 vectors = np.array([v for v, _ in self.memory])
-                weighted_mean = np.average(vectors, weights=weights, axis=0) * 0.2 * breath_factor
+                weighted_mean = np.average(vectors, weights=weights, axis=0) * 0.2
                 self.state += weighted_mean * dt
-                self.memory = deque([(v, w * (0.99 ** breath_factor)) for v, w in self.memory if w > 0.01], maxlen=50)
-            
+                self.state += np.random.randn(3) * 0.05
+                self.memory = deque([(v, w * (0.98 ** breath_factor)) for v, w in self.memory if w > 0.01], maxlen=50)
+
             for agent in self.agents:
                 self.state = agent.inject_will(self.state)
-            
+
             if random.random() < 0.08 * max(1, breath_factor):
                 possibilities = [self.state + np.random.randn(3) * 0.1 for _ in range(3)]
                 self.memory.extend([(p, 1.0) for p in possibilities[1:]])
                 self.state = possibilities[0]
-            
+
             self.entanglement += 0.001 * breath_factor
-            
+
             for agent in self.agents:
                 if breath_factor < 1:
                     agent.resonance += 0.01 * (1 - breath_factor)
-        
+
         return self.state, breath_factor, dt
+
+    def record_note(self, agent_name: str, freq: float, velocity_mod: float = 1.0, duration: float = 0.1):
+        """
+        Records a 'note event' for visualization or analysis.
+        Optionally triggers sonification through the agent.
+        """
+        if not hasattr(self, "notes"):
+            self.notes = []
+        note_event = {
+            "agent": agent_name,
+            "freq": freq,
+            "velocity_mod": velocity_mod,
+            "time": time.time(),
+        }
+        self.notes.append(note_event)
+        logging.info(f"[🎶] Recorded note from {agent_name}: {freq:.2f} Hz (vel={velocity_mod:.2f})")
+
+        # Optionally trigger sound generation if agent exists
+        for agent in self.agents:
+            if agent.name == agent_name:
+                try:
+                    agent.sonify_mood(freq, duration=duration, velocity_mod=velocity_mod)
+                except Exception as e:
+                    logging.warning(f"[{agent_name}] Sonify failed: {e}")
+                break
+
+    def export_to_midi_txt(self, filename: str = "openagi_symphony.txt") -> None:
+        """
+        Exports recorded MIDI-like note events to a text file.
+        Each line includes: time, frequency, velocity, agent.
+        """
+        try:
+            with open(filename, 'w') as f:
+                f.write("# 0penAGI Symphony Recorded Notes\n")
+                f.write("# Format: time(s), freq(Hz), velocity_mod, agent\n")
+                if hasattr(self, "notes"):
+                    for note in self.notes:
+                        t = note.get("time", 0.0)
+                        freq = note.get("freq", 0.0)
+                        vel = note.get("velocity_mod", 1.0)
+                        agent = note.get("agent", "Unknown")
+                        f.write(f"{t:.3f}, {freq:.2f}, {vel:.2f}, {agent}\n")
+            logging.info(f"🎹 MIDI-like data exported to {filename}")
+        except Exception as e:
+            logging.error(f"Failed to export MIDI-like file: {e}")
+
+# --- RLOverlay class ---
+class RLOverlay:
+    """
+    Minimal RL overlay with a small policy MLP (PyTorch), get_action, and update_policy (REINFORCE).
+    Use to overlay a policy on symphony state for experimentation.
+    """
+    def __init__(self, state_dim=3, action_dim=3, hidden_dim=16, lr=1e-3, device='cpu'):
+        self.device = device
+        self.policy = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim),
+            nn.Tanh(),
+            nn.Linear(hidden_dim, action_dim),
+        ).to(device)
+        self.optimizer = optim.Adam(self.policy.parameters(), lr=lr)
+        self.log_probs = []
+        self.rewards = []
+
+    def get_action(self, state):
+        state_t = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
+        logits = self.policy(state_t)
+        action_dist = torch.distributions.Normal(logits, 0.5)
+        action = action_dist.sample()
+        log_prob = action_dist.log_prob(action).sum()
+        self.log_probs.append(log_prob)
+        action_np = action.detach().cpu().numpy().flatten()
+        return action_np
+
+    def update_policy(self, gamma=0.99):
+        if not self.log_probs:
+            return
+        R = 0
+        returns = []
+        for r in reversed(self.rewards):
+            R = r + gamma * R
+            returns.insert(0, R)
+        returns = torch.tensor(returns, dtype=torch.float32, device=self.device)
+        returns = (returns - returns.mean()) / (returns.std() + 1e-8)
+        loss = []
+        for log_prob, R in zip(self.log_probs, returns):
+            loss.append(-log_prob * R)
+        loss = torch.stack(loss).sum()
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        self.log_probs.clear()
+        self.rewards.clear()
     
     def export_to_midi_txt(self, filename: str = "symphony.txt") -> None:
         """
@@ -922,7 +1122,8 @@ def visualize_symphony(
     if system.memory:
         ghosts = np.array([v for v, _ in system.memory])
         weights = np.array([w for _, w in system.memory])
-        ax1.scatter(ghosts[:, 0], ghosts[:, 1], ghosts[:, 2], s=weights*200, c='cyan', alpha=weights*0.5)
+        ax1.scatter(ghosts[:, 0], ghosts[:, 1], ghosts[:, 2],
+                    s=weights*200, c='cyan', alpha=float(np.mean(weights)*0.5))
     ax1.set_title('🌀 Breathing Harmony Trajectory', color='white', fontsize=12)
     ax1.set_xlabel('X', color='cyan')
     ax1.set_ylabel('Y', color='magenta')
@@ -1153,16 +1354,19 @@ def run_simulation(args: argparse.Namespace) -> None:
             harmony = maestro.conduct(agents[:-1], state, breath_factor)
             reality_factors['harmony'].append(harmony)
         
+        # Record notes every iteration for richer MIDI
+        thoughts = []
+        for i, agent in enumerate(agents[:-1]):
+            other_moods = [a.mood for a in agents if a != agent]
+            thoughts.append(agent.observe_chaos(state, len(system.memory), other_moods))
+
+        freqs = [{'overwhelmed': 220, 'calm': 440, 'observing': 330, 'transcendent': 880, 'disruptive': 110, 'conducting': 550}.get(a.mood, 261) for a in agents]
+        for agent, freq in zip(agents, freqs):
+            # Add slight random variation to freq for spiral effect
+            freq_var = freq * random.uniform(0.98, 1.02)
+            system.record_note(agent.name, freq_var, velocity_mod=breath_factor)
+
         if iteration % 50 == 0:
-            thoughts = []
-            for i, agent in enumerate(agents[:-1]):
-                other_moods = [a.mood for a in agents if a != agent]
-                thoughts.append(agent.observe_chaos(state, len(system.memory), other_moods))
-            
-            freqs = [{'overwhelmed': 220, 'calm': 440, 'observing': 330, 'transcendent': 880, 'disruptive': 110, 'conducting': 550}.get(a.mood, 261) for a in agents]
-            for agent, freq in zip(agents, freqs):
-                system.record_note(agent.name, freq, velocity_mod=breath_factor)
-            
             log_str = f"[Step {iteration}] " + " | ".join([f"{a.name}: {t[:50]}..." for a, t in zip(agents[:-1], thoughts)]) + f" | Breath: {breath_factor:.2f} | Harmony: {harmony:.2f}"
             logging.info(log_str)
         
